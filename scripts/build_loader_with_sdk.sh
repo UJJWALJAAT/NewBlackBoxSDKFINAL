@@ -16,7 +16,7 @@ fi
 echo "[1/3] Building NewBlackbox SDK AAR..."
 (
   cd "$NEWBLACKBOX_DIR"
-  ./gradlew :Bcore:assembleRelease
+  bash ./gradlew :Bcore:assembleRelease
 )
 
 if [[ ! -f "$AAR_SRC" ]]; then
@@ -32,10 +32,10 @@ echo "[3/3] Building Loader APK ($VARIANT)..."
 (
   cd "$LOADER_DIR"
   if [[ "$VARIANT" == "release" ]]; then
-    ./gradlew :app:assembleRelease
+    bash ./gradlew :app:assembleRelease
     APK_PATH="$LOADER_DIR/app/build/outputs/apk/release/app-release.apk"
   else
-    ./gradlew :app:assembleDebug
+    bash ./gradlew :app:assembleDebug
     APK_PATH="$LOADER_DIR/app/build/outputs/apk/debug/app-debug.apk"
   fi
 
