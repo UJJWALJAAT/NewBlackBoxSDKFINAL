@@ -60,6 +60,7 @@ public class FileCopyTask {
     private int currentProgress = 0;
     private long taskTotalBytes = 0;
     private long taskTotalCopied = 0;
+    private long elapsedTime = 0;
 
     public FileCopyTask(Activity activity) {
         this.activity = activity;
@@ -236,6 +237,11 @@ public class FileCopyTask {
         handler.post(dotRunnable);
     }
     
+    private void notifyProgressUpdated(int progress) {
+        currentProgress = progress;
+        updateCopyProgress(progress, "", copiedBytes, taskTotalBytes);
+    }
+
     private void updateCopyProgress(int progress, String message, long copied, long total) {
         activity.runOnUiThread(() -> {
             if (copyProgressBar != null && isCopying) {
@@ -546,8 +552,9 @@ public class FileCopyTask {
                 transferred += bytes;
                 taskTotalCopied += bytes;
                 copiedBytes = taskTotalCopied;
+                elapsedTime = System.currentTimeMillis() - startTime;
                 int progress = (int) ((taskTotalCopied * 100) / taskTotalBytes);
-                updateCopyProgress(progress, "", copiedBytes, taskTotalBytes);
+                notifyProgressUpdated(progress);
             }
         }
     }
