@@ -241,6 +241,15 @@ public class MainActivity extends Activity {
         });
     }
     
+    private boolean isPackageInstalledOnHost(String packageName) {
+        try {
+            getPackageManager().getPackageInfo(packageName, 0);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private void handleInstallUninstall(final int gameIndex, final TextView installButton) {
         final String packageName = GAME_LIST_PKG[gameIndex];
         final FileCopyTask fileCopyTask = new FileCopyTask(MainActivity.get());
@@ -253,6 +262,10 @@ public class MainActivity extends Activity {
             saveInstallationStatus(packageName, false);
             BoxApplication.get().showToastWithImage(Constants.UNINSTALL_SUCCESS, TastyToast.SUCCESS);
         } else {
+            if (!isPackageInstalledOnHost(packageName)) {
+                BoxApplication.get().showToastWithImage("Please install BGMI from Play Store first", TastyToast.WARNING);
+                return;
+            }
             // FileCopyTask will show its own animation and dialog
             if (fileCopyTask.isObbCopied(packageName)) {
                 if (ApkEnv.getInstance().installByPackage(packageName)) {

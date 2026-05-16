@@ -44,3 +44,4 @@
 # Keep SLF4J logging classes
 -keep class org.slf4j.** { *; }
 -dontwarn org.slf4j.**
+-keep class top.niunaijun.blackbox.core.RNative { *; }

@@ -30,6 +30,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.res.ResourcesCompat;
 
 import com.onecore.loader.R;
+import com.onecore.loader.utils.FLog;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -44,6 +45,9 @@ import org.lsposed.lsparanoid.Obfuscate;
 @Obfuscate
 public class FileCopyTask {
 
+    private static final int COPY_RETRY_COUNT = 3;
+    private static final long COPY_RETRY_DELAY_MS = 500L;
+
     private final Activity activity;
     private static LinearLayout copyOverlay = null;
     private TextView copyTitleText;
@@ -57,6 +61,9 @@ public class FileCopyTask {
     private long startTime = 0;
     private long copiedBytes = 0;
     private int currentProgress = 0;
+    private long taskTotalBytes = 0;
+    private long taskTotalCopied = 0;
+    private long elapsedTime = 0;
 
     public FileCopyTask(Activity activity) {
         this.activity = activity;
@@ -75,16 +82,96 @@ public class FileCopyTask {
         return BEnvironment.getExternalDataDir(packageName, BlackBoxCore.getUserId());
     }
 
+    private File getFallbackObbDir(String packageName) {
+        File base = new File(activity.getFilesDir(), "virtual_storage");
+        return new File(base, "Android/obb/" + packageName);
+    }
+
+    private File getSecondaryFallbackObbDir(String packageName) {
+        File base = activity.getExternalFilesDir("virtual_storage");
+        if (base == null) return null;
+        return new File(base, "Android/obb/" + packageName);
+    }
+
+    private File getFallbackDataDir(String packageName) {
+        File base = new File(activity.getFilesDir(), "virtual_storage");
+        return new File(base, "Android/data/" + packageName);
+    }
+
+    private File getSecondaryFallbackDataDir(String packageName) {
+        File base = activity.getExternalFilesDir("virtual_storage");
+        if (base == null) return null;
+        return new File(base, "Android/data/" + packageName);
+    }
+
+    private boolean ensureDir(File dir) {
+        if (dir == null) return false;
+        if (dir.exists()) {
+            if (dir.isDirectory()) return true;
+            if (!dir.delete()) return false;
+        }
+        return dir.mkdirs();
+    }
+
+    private File resolveWritableDir(File primary, File fallback, File secondaryFallback, String type, String packageName) {
+        if (ensureDir(primary)) {
+            return primary;
+        }
+        if (primary != null) {
+            FLog.warning("[" + type + "] primary dir create failed package=" + packageName + ", path=" + primary.getAbsolutePath());
+        }
+
+        if (ensureDir(fallback)) {
+            FLog.info("[" + type + "] using fallback dir package=" + packageName + ", path=" + fallback.getAbsolutePath());
+            return fallback;
+        }
+        if (fallback != null) {
+            FLog.warning("[" + type + "] fallback dir create failed package=" + packageName + ", path=" + fallback.getAbsolutePath());
+        }
+
+        if (ensureDir(secondaryFallback)) {
+            FLog.info("[" + type + "] using secondary fallback dir package=" + packageName + ", path=" + secondaryFallback.getAbsolutePath());
+            return secondaryFallback;
+        }
+        if (secondaryFallback != null) {
+            FLog.error("[" + type + "] secondary fallback dir create failed package=" + packageName + ", path=" + secondaryFallback.getAbsolutePath());
+        }
+
+        return null;
+    }
+
     public boolean isObbCopied(String packageName) {
-        File destDir = getExternalObbDir(packageName);
-        File[] files = destDir.listFiles();
-        return destDir.exists() && destDir.isDirectory() && files != null && files.length > 0;
+        File primary = getExternalObbDir(packageName);
+        File[] files = primary.listFiles();
+        if (primary.exists() && primary.isDirectory() && files != null && files.length > 0) return true;
+
+        File fallback = getFallbackObbDir(packageName);
+        if (fallback != null) {
+            File[] fallbackFiles = fallback.listFiles();
+            if (fallback.exists() && fallback.isDirectory() && fallbackFiles != null && fallbackFiles.length > 0) return true;
+        }
+
+        File secondaryFallback = getSecondaryFallbackObbDir(packageName);
+        if (secondaryFallback == null) return false;
+        File[] secondaryFiles = secondaryFallback.listFiles();
+        return secondaryFallback.exists() && secondaryFallback.isDirectory() && secondaryFiles != null && secondaryFiles.length > 0;
     }
 
     public boolean isDataCopied(String packageName) {
-        File destDir = getExternalDataDir(packageName);
-        File[] files = destDir.listFiles();
-        return destDir.exists() && destDir.isDirectory() && files != null && files.length > 0;
+        File primary = getExternalDataDir(packageName);
+        File[] files = primary.listFiles();
+        if (primary.exists() && primary.isDirectory() && files != null && files.length > 0) return true;
+
+        File fallback = getFallbackDataDir(packageName);
+        if (fallback != null) {
+            File[] fallbackFiles = fallback.listFiles();
+            if (fallback.exists() && fallback.isDirectory() && fallbackFiles != null && fallbackFiles.length > 0) return true;
+        }
+
+        File secondaryFallback = getSecondaryFallbackDataDir(packageName);
+        if (secondaryFallback == null) return false;
+        File[] secondaryFiles = secondaryFallback.listFiles();
+        return secondaryFallback.exists() && secondaryFallback.isDirectory() && secondaryFiles != null && secondaryFiles.length > 0;
     }
 
     public void requestStoragePermission() {
@@ -233,6 +320,11 @@ public class FileCopyTask {
         handler.post(dotRunnable);
     }
     
+    private void notifyProgressUpdated(int progress) {
+        currentProgress = progress;
+        updateCopyProgress(progress, "", copiedBytes, taskTotalBytes);
+    }
+
     private void updateCopyProgress(int progress, String message, long copied, long total) {
         activity.runOnUiThread(() -> {
             if (copyProgressBar != null && isCopying) {
@@ -346,6 +438,34 @@ public class FileCopyTask {
         });
     }
 
+
+    private boolean hasEnoughFreeSpace(File destinationDir, long requiredBytes) {
+        try {
+            File base = destinationDir;
+            while (base != null && !base.exists()) {
+                base = base.getParentFile();
+            }
+            if (base == null) return false;
+            long usable = base.getUsableSpace();
+            return usable > requiredBytes + (50L * 1024L * 1024L);
+        } catch (Throwable e) {
+            FLog.error("[OBB] disk space check failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean verifyCopiedFiles(File[] sourceFiles, File destDir) {
+        if (sourceFiles == null) return false;
+        for (File source : sourceFiles) {
+            File dest = new File(destDir, source.getName());
+            if (!dest.exists()) return false;
+            if (source.isFile() && source.length() != dest.length()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public void copyObbFolderAsync(final String packageName, final CopyCallback callback) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
             requestStoragePermission();
@@ -364,10 +484,7 @@ public class FileCopyTask {
         
         new AsyncTask<Void, Integer, Boolean>() {
 
-            private long totalBytes = 0;
-            private long totalCopied = 0;
             private String errorMsg = "";
-            private long elapsedTime = 0;
             private String copiedToPath = "";
             private String dataCopyWarning = "";
 
@@ -375,6 +492,8 @@ public class FileCopyTask {
             protected void onPreExecute() {
                 startTime = System.currentTimeMillis();
                 copiedBytes = 0;
+                taskTotalBytes = 0;
+                taskTotalCopied = 0;
             }
 
             @Override
@@ -382,59 +501,97 @@ public class FileCopyTask {
                 File rootStorage = Environment.getExternalStorageDirectory();
                 File sourceObbDir = new File(rootStorage, "Android/obb/" + packageName);
                 File sourceDataDir = new File(rootStorage, "Android/data/" + packageName);
-                File destObbDir = getExternalObbDir(packageName);
-                File destDataDir = getExternalDataDir(packageName);
+                File destObbDir = resolveWritableDir(getExternalObbDir(packageName), getFallbackObbDir(packageName), getSecondaryFallbackObbDir(packageName), "OBB", packageName);
+                File destDataDir = resolveWritableDir(getExternalDataDir(packageName), getFallbackDataDir(packageName), getSecondaryFallbackDataDir(packageName), "DATA", packageName);
+
+                if (destObbDir == null) {
+                    errorMsg = "Destination OBB folder creation failed!";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", both primary and fallback paths unavailable");
+                    return false;
+                }
                 copiedToPath = destObbDir.getAbsolutePath();
 
                 if (!sourceObbDir.exists() || !sourceObbDir.canRead()) {
                     errorMsg = "Source OBB not found or unreadable!";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", src=" + sourceObbDir.getAbsolutePath());
                     return false;
                 }
 
-                if (!destObbDir.exists() && !destObbDir.mkdirs()) {
+                if (!ensureDir(destObbDir)) {
                     errorMsg = "Destination OBB folder creation failed!";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", dest=" + destObbDir.getAbsolutePath());
                     return false;
                 }
 
                 File[] obbFiles = sourceObbDir.listFiles();
                 if (obbFiles == null || obbFiles.length == 0) {
                     errorMsg = "No OBB files to copy!";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", src=" + sourceObbDir.getAbsolutePath());
                     return false;
                 }
 
-                for (File file : obbFiles) totalBytes += file.length();
+                for (File file : obbFiles) taskTotalBytes += getDirectorySize(file);
+                if (taskTotalBytes <= 0) {
+                    errorMsg = "OBB files size is zero or unreadable!";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + " src=" + sourceObbDir.getAbsolutePath());
+                    return false;
+                }
 
-                try {
-                    for (File file : obbFiles) {
-                        File destFile = new File(destObbDir, file.getName());
+                if (!destObbDir.canWrite()) {
+                    errorMsg = "Destination OBB path not writable";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", dest=" + destObbDir.getAbsolutePath());
+                    return false;
+                }
 
-                        try (FileChannel sourceChannel = new FileInputStream(file).getChannel();
-                             FileChannel destChannel = new FileOutputStream(destFile).getChannel()) {
+                if (!hasEnoughFreeSpace(destObbDir, taskTotalBytes)) {
+                    errorMsg = "Insufficient storage for OBB copy";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", requiredBytes=" + taskTotalBytes);
+                    return false;
+                }
 
-                            long size = sourceChannel.size();
-                            long transferred = 0;
-                            while (transferred < size) {
-                                long bytes = sourceChannel.transferTo(transferred, size - transferred, destChannel);
-                                if (bytes <= 0) break;
-                                transferred += bytes;
-                                totalCopied += bytes;
-                                copiedBytes = totalCopied;
-                                elapsedTime = System.currentTimeMillis() - startTime;
-                                int progress = (int) ((totalCopied * 100) / totalBytes);
-
-                                publishProgress(progress);
-                            }
+                boolean copySuccess = false;
+                for (int attempt = 1; attempt <= COPY_RETRY_COUNT; attempt++) {
+                    try {
+                        taskTotalCopied = 0;
+                        copiedBytes = 0;
+                        FLog.info("[OBB] copy start package=" + packageName + ", attempt=" + attempt + ", src=" + sourceObbDir.getAbsolutePath() + ", dest=" + destObbDir.getAbsolutePath() + ", totalBytes=" + taskTotalBytes);
+                        for (File file : obbFiles) {
+                            copyFileOrDirectoryWithProgress(file, new File(destObbDir, file.getName()));
                         }
+                        copySuccess = verifyCopiedFiles(obbFiles, destObbDir);
+                        if (copySuccess) {
+                            FLog.info("[OBB] integrity check passed package=" + packageName + ", attempt=" + attempt);
+                            break;
+                        }
+                        FLog.warning("[OBB] integrity check failed package=" + packageName + ", attempt=" + attempt);
+                    } catch (IOException e) {
+                        FLog.error("[OBB] copy attempt failed package=" + packageName + ", attempt=" + attempt + ", error=" + e.getMessage());
                     }
 
+                    if (attempt < COPY_RETRY_COUNT) {
+                        try { Thread.sleep(COPY_RETRY_DELAY_MS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                    }
+                }
+
+                if (!copySuccess) {
+                    errorMsg = "OBB copy failed after retries";
+                    return false;
+                }
+
+                try {
                     if (sourceDataDir.exists()) {
                         File[] sourceDataChildren = sourceDataDir.listFiles();
                         if (sourceDataChildren == null) {
                             dataCopyWarning = "Android/data access denied by system; continuing with OBB only";
                         } else {
                             long sourceDataFiles = countFilesRecursive(sourceDataDir);
-                            copyDirectory(sourceDataDir, destDataDir);
-                            long destDataFiles = countFilesRecursive(destDataDir);
+                            if (destDataDir != null) {
+                                copyDirectory(sourceDataDir, destDataDir);
+                            } else {
+                                dataCopyWarning = "Virtual Android/data destination unavailable; skipped data copy";
+                                FLog.warning("[DATA] destination unavailable package=" + packageName + ", skipping Android/data copy");
+                            }
+                            long destDataFiles = destDataDir != null ? countFilesRecursive(destDataDir) : 0;
                             if (sourceDataFiles > 0 && destDataFiles == 0) {
                                 dataCopyWarning = "Android/data appears empty in virtual storage after copy";
                             }
@@ -442,6 +599,7 @@ public class FileCopyTask {
                     }
                 } catch (IOException e) {
                     errorMsg = "Error: " + e.getMessage();
+                    FLog.error("[OBB] copy failed package=" + packageName + ", error=" + e.getMessage());
                     return false;
                 }
                 return true;
@@ -450,7 +608,7 @@ public class FileCopyTask {
             @Override
             protected void onProgressUpdate(Integer... values) {
                 currentProgress = values[0];
-                updateCopyProgress(currentProgress, "", copiedBytes, totalBytes);
+                updateCopyProgress(currentProgress, "", copiedBytes, taskTotalBytes);
             }
 
             @Override
@@ -460,8 +618,10 @@ public class FileCopyTask {
                     if (!dataCopyWarning.isEmpty()) {
                         successMsg += "\n⚠ " + dataCopyWarning;
                     }
+                    FLog.info("[OBB] copy success package=" + packageName + ", dest=" + copiedToPath + (dataCopyWarning.isEmpty() ? "" : ", warning=" + dataCopyWarning));
                     hideCopyAnimation(true, successMsg);
                 } else {
+                    FLog.error("[OBB] copy failed package=" + packageName + ", message=" + errorMsg);
                     hideCopyAnimation(false, errorMsg);
                 }
                 
@@ -502,6 +662,57 @@ public class FileCopyTask {
                 long bytes = sourceChannel.transferTo(transferred, size - transferred, destChannel);
                 if (bytes <= 0) break;
                 transferred += bytes;
+            }
+        }
+    }
+
+
+    private long getDirectorySize(File file) {
+        if (file == null || !file.exists()) return 0;
+        if (file.isFile()) return file.length();
+
+        long size = 0;
+        File[] children = file.listFiles();
+        if (children == null) return 0;
+        for (File child : children) {
+            size += getDirectorySize(child);
+        }
+        return size;
+    }
+
+    private void copyFileOrDirectoryWithProgress(File source, File destination) throws IOException {
+        if (source.isDirectory()) {
+            if (!destination.exists() && !destination.mkdirs()) {
+                throw new IOException("Failed to create directory: " + destination.getAbsolutePath());
+            }
+            File[] children = source.listFiles();
+            if (children == null) {
+                return;
+            }
+            for (File child : children) {
+                copyFileOrDirectoryWithProgress(child, new File(destination, child.getName()));
+            }
+            return;
+        }
+
+        File parent = destination.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new IOException("Failed to create directory: " + parent.getAbsolutePath());
+        }
+
+        try (FileChannel sourceChannel = new FileInputStream(source).getChannel();
+             FileChannel destChannel = new FileOutputStream(destination).getChannel()) {
+            long size = sourceChannel.size();
+            long transferred = 0;
+            while (transferred < size) {
+                long bytes = sourceChannel.transferTo(transferred, size - transferred, destChannel);
+                if (bytes <= 0) break;
+                transferred += bytes;
+                taskTotalCopied += bytes;
+                copiedBytes = taskTotalCopied;
+                elapsedTime = System.currentTimeMillis() - startTime;
+                int progress = (int) ((taskTotalCopied * 100) / taskTotalBytes);
+                notifyProgressUpdated(progress);
             }
         }
     }
