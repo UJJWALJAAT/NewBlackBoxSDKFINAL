@@ -74,6 +74,8 @@ public class LoginActivity extends AppCompatActivity {
     private static final String USER = "USER";
     public static String USERKEY = null;
     private static final String VALID_SIGNATURE_HASH = "77F05D53CE8BF1855CAEF38CE87F13A8BB2B1B2CDD2D48DA9D3BA897EAC4549E";
+    private static final int MAX_LOGIN_RETRIES = 3;
+    private static final long LOGIN_BASE_RETRY_DELAY_MS = 1200L;
 
     private TextView btnSignIn;
     private FrameLayout logo;
@@ -482,22 +484,38 @@ public class LoginActivity extends AppCompatActivity {
 
         new Thread(() -> {
             Message msg = new Message();
-            try {
-                FLog.info("[LOGIN] verify start keyLength=" + (key == null ? 0 : key.length()));
-                String result = Check(activity, key);
-                FLog.info("[LOGIN] verify result=" + result);
-                if ("OK".equals(result)) {
-                    msg.what = 0;
-                } else {
-                    msg.what = 1;
-                    msg.obj = result != null && !result.isEmpty() ? result : "USER OR GAME NOT REGISTERED";
+            String finalResult = null;
+            for (int attempt = 1; attempt <= MAX_LOGIN_RETRIES; attempt++) {
+                try {
+                    FLog.info("[LOGIN] verify start attempt=" + attempt + " keyLength=" + (key == null ? 0 : key.length()));
+                    String result = Check(activity, key);
+                    FLog.info("[LOGIN] verify result attempt=" + attempt + " value=" + result);
+                    if ("OK".equals(result)) {
+                        msg.what = 0;
+                        responseHandler.sendMessage(msg);
+                        return;
+                    }
+                    finalResult = result;
+                } catch (Throwable t) {
+                    finalResult = "Native crash: " + t.getMessage();
+                    FLog.error("[LOGIN] attempt=" + attempt + " " + finalResult);
                 }
-            } catch (Throwable t) {
-                msg.what = 1;
-                String crashMsg = "Native crash: " + t.getMessage();
-                msg.obj = crashMsg;
-                FLog.error("[LOGIN] " + crashMsg);
+
+                if (attempt < MAX_LOGIN_RETRIES) {
+                    long sleepMs = LOGIN_BASE_RETRY_DELAY_MS * (1L << (attempt - 1));
+                    FLog.warning("[LOGIN] retrying after=" + sleepMs + "ms attempt=" + (attempt + 1));
+                    try {
+                        Thread.sleep(sleepMs);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
             }
+
+            msg.what = 1;
+            msg.obj = (finalResult == null || finalResult.isEmpty())
+                    ? "Login failed after 3 retries. Check internet/server and try again."
+                    : finalResult + " (retried " + MAX_LOGIN_RETRIES + " times)";
             responseHandler.sendMessage(msg);
         }).start();
     }

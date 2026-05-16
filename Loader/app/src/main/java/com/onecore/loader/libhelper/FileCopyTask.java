@@ -486,7 +486,7 @@ public class FileCopyTask {
                     return false;
                 }
 
-                if (!destObbDir.exists() && !destObbDir.mkdirs()) {
+                if (!ensureDir(destObbDir)) {
                     errorMsg = "Destination OBB folder creation failed!";
                     FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", dest=" + destObbDir.getAbsolutePath());
                     return false;
