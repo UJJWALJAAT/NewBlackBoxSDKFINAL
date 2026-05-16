@@ -62,5 +62,15 @@ Agar CI/CD lagani ho to stage order aisa rakho:
 5. Build Loader APK
 6. Upload APK artifact
 
----
-Agar tum chaho to next step me main GitHub Actions workflow file bhi add kar dunga (`.github/workflows/android-build.yml`) jisse push pe auto build ho jaye.
+## 7) GitHub Actions
+Repo me CI workflow add kiya gaya hai: `.github/workflows/android-loader-build.yml`
+
+Ye workflow automatically:
+1. JDK 17 setup karta hai
+2. Android SDK + NDK `29.0.13846066` install karta hai
+3. `bash scripts/build_loader_with_sdk.sh debug` run karta hai
+4. Artifacts upload karta hai:
+   - `Loader` debug APK
+   - `Bcore-release.aar`
+
+Agar tum release signing ke sath CI release build chahte ho to secrets-based signing config next step me add kar sakte ho.
