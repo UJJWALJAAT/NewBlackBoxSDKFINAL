@@ -368,7 +368,6 @@ public class FileCopyTask {
         new AsyncTask<Void, Integer, Boolean>() {
 
             private String errorMsg = "";
-            private long elapsedTime = 0;
             private String copiedToPath = "";
             private String dataCopyWarning = "";
 
@@ -547,9 +546,8 @@ public class FileCopyTask {
                 transferred += bytes;
                 taskTotalCopied += bytes;
                 copiedBytes = taskTotalCopied;
-                elapsedTime = System.currentTimeMillis() - startTime;
                 int progress = (int) ((taskTotalCopied * 100) / taskTotalBytes);
-                publishProgress(progress);
+                updateCopyProgress(progress, "", copiedBytes, taskTotalBytes);
             }
         }
     }
