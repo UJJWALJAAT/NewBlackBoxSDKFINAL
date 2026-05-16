@@ -80,27 +80,32 @@ public class FileCopyTask {
     }
 
     private File getFallbackObbDir(String packageName) {
-        File base = activity.getExternalFilesDir(null);
-        if (base == null) return null;
-        return new File(base, "blackbox/storage/emulated/0/Android/obb/" + packageName);
+        File base = new File(activity.getFilesDir(), "virtual_storage");
+        return new File(base, "Android/obb/" + packageName);
     }
 
     private File getFallbackDataDir(String packageName) {
-        File base = activity.getExternalFilesDir(null);
-        if (base == null) return null;
-        return new File(base, "blackbox/storage/emulated/0/Android/data/" + packageName);
+        File base = new File(activity.getFilesDir(), "virtual_storage");
+        return new File(base, "Android/data/" + packageName);
     }
 
     private File resolveWritableDir(File primary, File fallback, String type, String packageName) {
-        if (primary.exists() || primary.mkdirs()) {
+        if (primary != null && (primary.exists() || primary.mkdirs())) {
             return primary;
         }
-        FLog.warning("[" + type + "] primary dir create failed package=" + packageName + ", path=" + primary.getAbsolutePath());
+        if (primary != null) {
+            FLog.warning("[" + type + "] primary dir create failed package=" + packageName + ", path=" + primary.getAbsolutePath());
+        }
+
         if (fallback != null && (fallback.exists() || fallback.mkdirs())) {
             FLog.info("[" + type + "] using fallback dir package=" + packageName + ", path=" + fallback.getAbsolutePath());
             return fallback;
         }
-        return primary;
+
+        if (fallback != null) {
+            FLog.error("[" + type + "] fallback dir create failed package=" + packageName + ", path=" + fallback.getAbsolutePath());
+        }
+        return null;
     }
 
     public boolean isObbCopied(String packageName) {
@@ -426,6 +431,12 @@ public class FileCopyTask {
                 File sourceDataDir = new File(rootStorage, "Android/data/" + packageName);
                 File destObbDir = resolveWritableDir(getExternalObbDir(packageName), getFallbackObbDir(packageName), "OBB", packageName);
                 File destDataDir = resolveWritableDir(getExternalDataDir(packageName), getFallbackDataDir(packageName), "DATA", packageName);
+
+                if (destObbDir == null) {
+                    errorMsg = "Destination OBB folder creation failed!";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", both primary and fallback paths unavailable");
+                    return false;
+                }
                 copiedToPath = destObbDir.getAbsolutePath();
 
                 if (!sourceObbDir.exists() || !sourceObbDir.canRead()) {
@@ -466,8 +477,13 @@ public class FileCopyTask {
                             dataCopyWarning = "Android/data access denied by system; continuing with OBB only";
                         } else {
                             long sourceDataFiles = countFilesRecursive(sourceDataDir);
-                            copyDirectory(sourceDataDir, destDataDir);
-                            long destDataFiles = countFilesRecursive(destDataDir);
+                            if (destDataDir != null) {
+                                copyDirectory(sourceDataDir, destDataDir);
+                            } else {
+                                dataCopyWarning = "Virtual Android/data destination unavailable; skipped data copy";
+                                FLog.warning("[DATA] destination unavailable package=" + packageName + ", skipping Android/data copy");
+                            }
+                            long destDataFiles = destDataDir != null ? countFilesRecursive(destDataDir) : 0;
                             if (sourceDataFiles > 0 && destDataFiles == 0) {
                                 dataCopyWarning = "Android/data appears empty in virtual storage after copy";
                             }
