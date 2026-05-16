@@ -1,6 +1,7 @@
 package com.onecore.loader.utils;
 
 import android.content.Context;
+import android.os.Environment;
 import android.util.Log;
 
 import com.onecore.loader.BuildConfig;
@@ -20,6 +21,33 @@ public class FLog {
     private static final SimpleDateFormat DATE_FILE_FORMAT = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
     private static final SimpleDateFormat DATE_LOG_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US);
 
+    private static File resolveLogsDir(Context context) {
+        File publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (publicDownloads != null) {
+            File loaderLogsDir = new File(publicDownloads, "LoaderLogs");
+            if (loaderLogsDir.exists() || loaderLogsDir.mkdirs()) {
+                return loaderLogsDir;
+            }
+        }
+
+        File appDownloads = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (appDownloads != null) {
+            File loaderLogsDir = new File(appDownloads, "LoaderLogs");
+            if (loaderLogsDir.exists() || loaderLogsDir.mkdirs()) {
+                return loaderLogsDir;
+            }
+        }
+
+        File externalDir = context.getExternalFilesDir(null);
+        if (externalDir != null) {
+            File logsDir = new File(externalDir, "logs");
+            if (logsDir.exists() || logsDir.mkdirs()) {
+                return logsDir;
+            }
+        }
+        return null;
+    }
+
     private static void writeToFile(String level, String msg) {
         try {
             Context context = BoxApplication.get();
@@ -27,12 +55,8 @@ public class FLog {
                 return;
             }
 
-            File externalDir = context.getExternalFilesDir(null);
-            if (externalDir == null) {
-                return;
-            }
-            File logsDir = new File(externalDir, "logs");
-            if (!logsDir.exists() && !logsDir.mkdirs()) {
+            File logsDir = resolveLogsDir(context);
+            if (logsDir == null) {
                 return;
             }
 

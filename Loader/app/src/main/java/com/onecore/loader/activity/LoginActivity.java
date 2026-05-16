@@ -474,6 +474,7 @@ public class LoginActivity extends AppCompatActivity {
                 } else {
                     // Failed - show access denied animation
                     String error = msg.obj.toString();
+                    FLog.error("[LOGIN] access denied reason=" + error);
                     activity.showAccessDeniedAnimation(error);
                 }
             }
@@ -482,7 +483,9 @@ public class LoginActivity extends AppCompatActivity {
         new Thread(() -> {
             Message msg = new Message();
             try {
+                FLog.info("[LOGIN] verify start keyLength=" + (key == null ? 0 : key.length()));
                 String result = Check(activity, key);
+                FLog.info("[LOGIN] verify result=" + result);
                 if ("OK".equals(result)) {
                     msg.what = 0;
                 } else {
@@ -491,7 +494,9 @@ public class LoginActivity extends AppCompatActivity {
                 }
             } catch (Throwable t) {
                 msg.what = 1;
-                msg.obj = "Native crash: " + t.getMessage();
+                String crashMsg = "Native crash: " + t.getMessage();
+                msg.obj = crashMsg;
+                FLog.error("[LOGIN] " + crashMsg);
             }
             responseHandler.sendMessage(msg);
         }).start();
