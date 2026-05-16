@@ -45,6 +45,9 @@ import org.lsposed.lsparanoid.Obfuscate;
 @Obfuscate
 public class FileCopyTask {
 
+    private static final int COPY_RETRY_COUNT = 3;
+    private static final long COPY_RETRY_DELAY_MS = 500L;
+
     private final Activity activity;
     private static LinearLayout copyOverlay = null;
     private TextView copyTitleText;
@@ -435,6 +438,34 @@ public class FileCopyTask {
         });
     }
 
+
+    private boolean hasEnoughFreeSpace(File destinationDir, long requiredBytes) {
+        try {
+            File base = destinationDir;
+            while (base != null && !base.exists()) {
+                base = base.getParentFile();
+            }
+            if (base == null) return false;
+            long usable = base.getUsableSpace();
+            return usable > requiredBytes + (50L * 1024L * 1024L);
+        } catch (Throwable e) {
+            FLog.error("[OBB] disk space check failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean verifyCopiedFiles(File[] sourceFiles, File destDir) {
+        if (sourceFiles == null) return false;
+        for (File source : sourceFiles) {
+            File dest = new File(destDir, source.getName());
+            if (!dest.exists()) return false;
+            if (source.isFile() && source.length() != dest.length()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public void copyObbFolderAsync(final String packageName, final CopyCallback callback) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
             requestStoragePermission();
@@ -506,12 +537,48 @@ public class FileCopyTask {
                     return false;
                 }
 
-                try {
-                    FLog.info("[OBB] copy start package=" + packageName + ", src=" + sourceObbDir.getAbsolutePath() + ", dest=" + destObbDir.getAbsolutePath() + ", totalBytes=" + taskTotalBytes);
-                    for (File file : obbFiles) {
-                        copyFileOrDirectoryWithProgress(file, new File(destObbDir, file.getName()));
+                if (!destObbDir.canWrite()) {
+                    errorMsg = "Destination OBB path not writable";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", dest=" + destObbDir.getAbsolutePath());
+                    return false;
+                }
+
+                if (!hasEnoughFreeSpace(destObbDir, taskTotalBytes)) {
+                    errorMsg = "Insufficient storage for OBB copy";
+                    FLog.error("[OBB] " + errorMsg + " package=" + packageName + ", requiredBytes=" + taskTotalBytes);
+                    return false;
+                }
+
+                boolean copySuccess = false;
+                for (int attempt = 1; attempt <= COPY_RETRY_COUNT; attempt++) {
+                    try {
+                        taskTotalCopied = 0;
+                        copiedBytes = 0;
+                        FLog.info("[OBB] copy start package=" + packageName + ", attempt=" + attempt + ", src=" + sourceObbDir.getAbsolutePath() + ", dest=" + destObbDir.getAbsolutePath() + ", totalBytes=" + taskTotalBytes);
+                        for (File file : obbFiles) {
+                            copyFileOrDirectoryWithProgress(file, new File(destObbDir, file.getName()));
+                        }
+                        copySuccess = verifyCopiedFiles(obbFiles, destObbDir);
+                        if (copySuccess) {
+                            FLog.info("[OBB] integrity check passed package=" + packageName + ", attempt=" + attempt);
+                            break;
+                        }
+                        FLog.warning("[OBB] integrity check failed package=" + packageName + ", attempt=" + attempt);
+                    } catch (IOException e) {
+                        FLog.error("[OBB] copy attempt failed package=" + packageName + ", attempt=" + attempt + ", error=" + e.getMessage());
                     }
 
+                    if (attempt < COPY_RETRY_COUNT) {
+                        try { Thread.sleep(COPY_RETRY_DELAY_MS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                    }
+                }
+
+                if (!copySuccess) {
+                    errorMsg = "OBB copy failed after retries";
+                    return false;
+                }
+
+                try {
                     if (sourceDataDir.exists()) {
                         File[] sourceDataChildren = sourceDataDir.listFiles();
                         if (sourceDataChildren == null) {

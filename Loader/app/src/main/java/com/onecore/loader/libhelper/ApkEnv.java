@@ -191,6 +191,9 @@ public class ApkEnv {
         try {
             Class.forName("top.niunaijun.blackbox.core.RNative", true, ApkEnv.class.getClassLoader());
             FLog.info("RNative class loaded (static init attempted)");
+        } catch (ClassNotFoundException err) {
+            FLog.error("Unable to load RNative class: " + err.getMessage());
+            FLog.warning("RNative class not found; continuing with direct SDK NativeCore fallback");
         } catch (Throwable err) {
             FLog.error("Unable to load RNative class: " + err.getMessage());
         }
@@ -265,6 +268,7 @@ public class ApkEnv {
         }
 
         FLog.error("Unable to sync SDK NativeCore libtarget via reflection; continuing with file-based fallback");
+        FLog.info("Using direct loader file fallback path as NativeCore libtarget sync fallback");
     }
 
 }
