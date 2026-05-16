@@ -79,16 +79,50 @@ public class FileCopyTask {
         return BEnvironment.getExternalDataDir(packageName, BlackBoxCore.getUserId());
     }
 
+    private File getFallbackObbDir(String packageName) {
+        File base = activity.getExternalFilesDir(null);
+        if (base == null) return null;
+        return new File(base, "blackbox/storage/emulated/0/Android/obb/" + packageName);
+    }
+
+    private File getFallbackDataDir(String packageName) {
+        File base = activity.getExternalFilesDir(null);
+        if (base == null) return null;
+        return new File(base, "blackbox/storage/emulated/0/Android/data/" + packageName);
+    }
+
+    private File resolveWritableDir(File primary, File fallback, String type, String packageName) {
+        if (primary.exists() || primary.mkdirs()) {
+            return primary;
+        }
+        FLog.warning("[" + type + "] primary dir create failed package=" + packageName + ", path=" + primary.getAbsolutePath());
+        if (fallback != null && (fallback.exists() || fallback.mkdirs())) {
+            FLog.info("[" + type + "] using fallback dir package=" + packageName + ", path=" + fallback.getAbsolutePath());
+            return fallback;
+        }
+        return primary;
+    }
+
     public boolean isObbCopied(String packageName) {
-        File destDir = getExternalObbDir(packageName);
-        File[] files = destDir.listFiles();
-        return destDir.exists() && destDir.isDirectory() && files != null && files.length > 0;
+        File primary = getExternalObbDir(packageName);
+        File[] files = primary.listFiles();
+        if (primary.exists() && primary.isDirectory() && files != null && files.length > 0) return true;
+
+        File fallback = getFallbackObbDir(packageName);
+        if (fallback == null) return false;
+        File[] fallbackFiles = fallback.listFiles();
+        return fallback.exists() && fallback.isDirectory() && fallbackFiles != null && fallbackFiles.length > 0;
     }
 
     public boolean isDataCopied(String packageName) {
-        File destDir = getExternalDataDir(packageName);
-        File[] files = destDir.listFiles();
-        return destDir.exists() && destDir.isDirectory() && files != null && files.length > 0;
+        File primary = getExternalDataDir(packageName);
+        File[] files = primary.listFiles();
+        if (primary.exists() && primary.isDirectory() && files != null && files.length > 0) return true;
+
+        File fallback = getFallbackDataDir(packageName);
+        if (fallback == null) return false;
+        File[] fallbackFiles = fallback.listFiles();
+        return fallback.exists() && fallback.isDirectory() && fallbackFiles != null && fallbackFiles.length > 0;
     }
 
     public void requestStoragePermission() {
@@ -390,8 +424,8 @@ public class FileCopyTask {
                 File rootStorage = Environment.getExternalStorageDirectory();
                 File sourceObbDir = new File(rootStorage, "Android/obb/" + packageName);
                 File sourceDataDir = new File(rootStorage, "Android/data/" + packageName);
-                File destObbDir = getExternalObbDir(packageName);
-                File destDataDir = getExternalDataDir(packageName);
+                File destObbDir = resolveWritableDir(getExternalObbDir(packageName), getFallbackObbDir(packageName), "OBB", packageName);
+                File destDataDir = resolveWritableDir(getExternalDataDir(packageName), getFallbackDataDir(packageName), "DATA", packageName);
                 copiedToPath = destObbDir.getAbsolutePath();
 
                 if (!sourceObbDir.exists() || !sourceObbDir.canRead()) {
